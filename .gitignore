@@ -1,0 +1,8 @@
+data/
+dataset/
+ray_temp/
+experiment_result/
+pretrained_model/
+*.npy
+*.pt
+*.pkl

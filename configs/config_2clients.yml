@@ -1,0 +1,42 @@
+path:
+    velocity_data_path: "dataset/velocity_model/"
+    client_seismic_data_path: "dataset/seismic_data/2A/"
+    gt_seismic_data_path: "dataset/seismic_data/5_sources/"
+    model_path: "pretrained_model/model.pt"
+    output_path: "experiment_result/"
+
+federated:
+    num_rounds: 1
+    local_epochs: 5
+    local_lr: 0.01
+
+experiment:
+    strategy: "FedAvgM"
+    regularization: "Diffusion"
+    server_momentum: 0.9
+    num_clients: 2
+    scenario_flag: 2A
+
+diffusion:
+    dim: 64
+    dim_mults: [1, 2, 4, 8]
+    flash_attn: False
+    channels: 1
+    image_size: 72
+    timesteps: 1000
+    sampling_timesteps: 250
+    objective: "pred_noise"
+    
+forward:
+    initial_sigma: 10
+    n_grid: 70
+    nt: 1000
+    dx: 10
+    nbc: 120
+    dt: 1e-3
+    f: 15
+    sz: 10
+    gz: 10
+    ng: 70
+    ns: 5
+
