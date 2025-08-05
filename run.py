@@ -99,6 +99,15 @@ def run_full_experiment(config_path: str):
 
     print("--- STARTING FULL EXPERIMENT RUN ---")
     print(f"Strategy: {config.experiment.strategy}, Regularization: {config.experiment.regularization}, Scenario: {config.experiment.scenario_flag}")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"{config.experiment.strategy}_{config.experiment.regularization}_{config.experiment.scenario_flag}_{timestamp}"
+    main_output_dir = os.path.join(config.path.output_path, run_name)
+    os.makedirs(main_output_dir, exist_ok=True)
+    print(f"Results for this run will be saved in: {main_output_dir}")
+
+    # Create a sub-directory for intermediate files
+    intermediate_path = os.path.join(main_output_dir, "intermediate_results")
+    os.makedirs(intermediate_path, exist_ok=True)
 
     # --- 1. SETUP SHARED COMPONENTS ---
     # These components are the same for all 40 runs.
@@ -234,6 +243,11 @@ def run_full_experiment(config_path: str):
             all_results['individual_runs'].append(run_result)
             family_histories.append(history)
 
+            intermediate_filename = os.path.join(intermediate_path, f"{family}_{i}_result.pkl")
+            print(f"Saving intermediate result to: {intermediate_filename}")
+            with open(intermediate_filename, 'wb') as f:
+                pickle.dump(run_result, f)
+
         # --- 6. CALCULATE AND STORE FAMILY MEAN HISTORY ---
         all_results['family_histories'][family] = average_histories(family_histories)
         print(f"--- Finished Family: {family} ---")
@@ -242,13 +256,11 @@ def run_full_experiment(config_path: str):
     all_individual_histories = [run['history'] for run in all_results['individual_runs']]
     all_results['overall_history'] = average_histories(all_individual_histories)
     
-    # --- 8. SAVE EVERYTHING TO ONE FILE ---
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{config.path.output_path}/{config.experiment.strategy}_{config.experiment.regularization}_{config.experiment.scenario_flag}_{timestamp}.pkl"
-    os.makedirs(config.path.output_path, exist_ok=True)
-    
-    with open(filename, 'wb') as f:
+    # --- 8. SAVE THE FINAL AGGREGATED FILE ---
+    # Save the final summary file inside the unique run directory
+    final_filename = os.path.join(main_output_dir, "aggregated_results.pkl")
+    with open(final_filename, 'wb') as f:
         pickle.dump(all_results, f)
         
     print(f"\n--- FULL EXPERIMENT COMPLETE ---")
-    print(f"All results saved to: {filename}")
+    print(f"All results, including intermediates and the final aggregated file, are in: {main_output_dir}")
