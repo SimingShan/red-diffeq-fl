@@ -58,7 +58,8 @@ class FwiClient(fl.client.NumPyClient):
         local_lr: float = float(config["local_lr"])
         total_rounds: int = int(config["total_rounds"])
         server_round: int = int(config["server_round"])
-        regularization: str = str(config["regularization"])
+        # Do not cast to string; preserve None so baseline (no regularization) works
+        regularization = config["regularization"]
 
         global_step = (server_round - 1) * local_epochs
         optimizer_local = torch.optim.Adam([local_model], lr=local_lr)
@@ -75,15 +76,22 @@ class FwiClient(fl.client.NumPyClient):
             optimizer_local.zero_grad()
             model_input = local_model[:, :, 1:-1, 1:-1]
             
+            # Handle batch processing - the local_data now contains multiple instances
+            batch_size = self.local_data.shape[0]
+            
+            # For batch processing, we need to handle multiple velocity models
+            # We'll use the same local_model for all instances in the batch
+            # This is a simplified approach - you might want to create separate models for each instance
+            
             predicted_seismic = self.fwi_forward(model_input, client_idx=self.cid, 
                                                  scenario=self.scenario_flag,
                                                  num_clients=self.num_total_clients)
 
+            # Calculate loss across the entire batch
             seismic_loss = l1_loss_fn(self.local_data.float(), predicted_seismic.float())
     
             diffusion_loss = torch.tensor(0.0, device=self.device)
             if regularization == "Diffusion":
-                batch_size = self.local_data.shape[0]
                 time = torch.randint(0, self.diffusion_model.num_timesteps, (1,)).item()
                 time_cond = torch.full((batch_size,), time, device=self.device, dtype=torch.long)
                 time_tensor = torch.full((batch_size,), time, device=self.device, dtype=torch.long)
@@ -106,7 +114,7 @@ class FwiClient(fl.client.NumPyClient):
             elif regularization == "Tiknov":
                 reg_loss = tikhonov_loss(model_input)
                 total_loss = seismic_loss + 0.1 * reg_loss
-            elif regularization == None:
+            elif regularization == "None":
                 total_loss = seismic_loss
                 
             total_loss.backward()

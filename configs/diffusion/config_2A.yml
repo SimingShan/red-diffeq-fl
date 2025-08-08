@@ -17,6 +17,10 @@ experiment:
     num_clients: 2 # Make sure correct
     scenario_flag: 2A # Make sure correct
 
+resources:
+    num_cpus_per_client: 1
+    num_gpus_per_client: 0.5
+
 diffusion:
     dim: 64
     dim_mults: [1, 2, 4, 8]
@@ -39,4 +43,4 @@ forward:
     gz: 10
     ng: 70
     ns: 5
-
+    sx: null

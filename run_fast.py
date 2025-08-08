@@ -17,7 +17,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
 from torch.optim import Adam
-
+from pathlib import Path
 import flwr as fl
 from flwr.common import (
     Context,
@@ -93,6 +93,9 @@ def run_full_experiment(config_path: str):
     Loads configuration, runs the full suite of FL experiments for all data families
     and instances, aggregates results, and saves them to a single file.
     """
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
     config = OmegaConf.load(config_path)
     mp.set_start_method('spawn', force=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -117,7 +120,7 @@ def run_full_experiment(config_path: str):
            'nbc': config.forward.nbc, 'dt': config.forward.dt, 'f': config.forward.f,
            'sz': config.forward.sz, 'gz': config.forward.gz, 'ng': config.forward.ng}
     fwi_forward = FWIForward(ctx, device, normalize=True, v_denorm_func=v_denormalize, s_norm_func=s_normalize_none)
-
+    #fwi_forward = torch.compile(fwi_forward, mode="reduce-overhead")
     server_diffusion_model = None
     diffusion_state_dict = None
     diffusion_args = None
@@ -138,7 +141,7 @@ def run_full_experiment(config_path: str):
                 flash_attn=diffusion_args.get('flash_attn'),
                 channels=diffusion_args.get('channels')
             )
-
+            #unet_model = torch.compile(unet_model, mode="max-autotune")
             diffusion = GaussianDiffusion(
                 unet_model,
                 image_size=diffusion_args.get('image_size'),
@@ -165,7 +168,13 @@ def run_full_experiment(config_path: str):
     # --- 2. SETUP EXPERIMENT LOOP ---
     families = ['CF', 'CV', 'FF', 'FV']
     all_results = {'individual_runs': [], 'family_histories': {}, 'overall_history': {}}
-    
+    family_to_vm = {fam: np.load(f"{config.path.velocity_data_path}/{fam}.npy", mmap_mode="r") for fam in families}
+    family_to_gt = {fam: np.load(f"{config.path.gt_seismic_data_path}/{fam}.npy", mmap_mode="r") for fam in families}
+    family_to_clients = {
+        fam: [np.load(f"{config.path.client_seismic_data_path}/client{c+1}/{fam}.npy", mmap_mode="r")
+            for c in range(config.experiment.num_clients)]
+        for fam in families
+}
     # Loop over 4 families
     for family in families:
         family_histories = []
@@ -179,12 +188,14 @@ def run_full_experiment(config_path: str):
             # This is critical to ensure each of the 40 runs is independent.
             
             # Load data for this specific instance
-            vm_data = torch.tensor(np.load(f"{config.path.velocity_data_path}/{family}.npy")[i:i+1,:]).float()
-            gt_seismic_data = torch.tensor(np.load(f"{config.path.gt_seismic_data_path}/{family}.npy")[i:i+1,:]).float().to(device)
-            client_data_list = []
-            for client_idx in range(config.experiment.num_clients):
-                client_data = np.load(f"{config.path.client_seismic_data_path}/client{client_idx+1}/{family}.npy")[i:i+1,:]
-                client_data_list.append(torch.tensor(client_data).float().to(device))
+            vm_np = family_to_vm[family][i:i+1, :]
+            gt_np = family_to_gt[family][i:i+1, :]
+            client_nps = [arr[i:i+1, :] for arr in family_to_clients[family]]
+
+            vm_data = torch.from_numpy(np.ascontiguousarray(vm_np)).float()                     # CPU
+            gt_seismic_data = torch.from_numpy(np.ascontiguousarray(gt_np)).float().pin_memory().to(device, non_blocking=True)
+            client_data_list = [torch.from_numpy(np.ascontiguousarray(x)).float().pin_memory().to(device, non_blocking=True)
+                                for x in client_nps]
 
             # Create a fresh initial model
             initial_model = data_trans.prepare_initial_model(vm_data, initial_type='smoothed', sigma=config.forward.initial_sigma)
@@ -219,16 +230,22 @@ def run_full_experiment(config_path: str):
                 diffusion_args=diffusion_args,
                 diffusion_state_dict=diffusion_state_dict
             )
-            ray_temp_dir = os.path.join("./ray_temp")
+            ray_temp_dir = "/tmp/rfl"  # or "/dev/shm/rfl" if you have enough shared memory
             os.makedirs(ray_temp_dir, exist_ok=True)
+
+            # Cap CPU threads to avoid oversubscription
+            os.environ["OMP_NUM_THREADS"] = "1"
+            os.environ["MKL_NUM_THREADS"] = "1"
+            torch.set_num_threads(1)
             # --- 4. RUN ONE SIMULATION ---
             history = fl.simulation.start_simulation(
                 client_fn=client_fn_instance,
                 num_clients=config.experiment.num_clients,
                 config=fl.server.ServerConfig(num_rounds=config.federated.num_rounds),
                 strategy=strategy,
-                client_resources={"num_gpus": 0.5} if device.type == "cuda" else {},
-                ray_init_args={"include_dashboard": False, "_temp_dir": ray_temp_dir}
+                client_resources={"num_gpus": config.resources.num_gpus_per_client, 
+                 "num_cpus": config.resources.num_cpus_per_client} if device.type == "cuda" else {},
+                ray_init_args={"include_dashboard": False, "_temp_dir": ray_temp_dir},
             )
 
             # --- 5. STORE INDIVIDUAL RESULTS ---

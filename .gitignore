@@ -6,3 +6,5 @@ pretrained_model/
 *.npy
 *.pt
 *.pkl
+*.png
+*.sh

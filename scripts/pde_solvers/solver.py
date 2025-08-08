@@ -73,7 +73,10 @@ class FWIForward(nn.Module):
         if scenario == '2A' or scenario == '2B':
             total_sources = (np.linspace(0, self.ctx['n_grid'] - 1, num=5) * self.ctx['dx'])
         elif scenario == '2C':
-            total_sources = [10.0, 15.0, 20.0, 34.0, 52.0, 69.0]
+            # Provided as grid indices in the dataset generation notebook; convert to meters
+            total_sources = np.array([10.0, 15.0, 20.0, 34.0, 52.0, 69.0]) * self.ctx['dx']
+        elif scenario == '3A' or scenario == '3B':
+            total_sources = np.linspace(0, self.ctx['n_grid'] - 1, num=10) * self.ctx['dx']
         else:
             raise NotImplementedError(f"Scenario '{scenario}' is not defined.")
 
@@ -83,11 +86,7 @@ class FWIForward(nn.Module):
             # Use the full set of sources for the specified scenario
             run_ctx['sx'] = total_sources
             run_ctx['ns'] = len(total_sources)
-        else:
-            # CLIENT-SIDE RUN
-            if num_clients != 2:
-                raise NotImplementedError("Partitioning is only implemented for num_clients=2.")
-            
+        else:        
             if scenario == '2A':
                 if client_idx == 0:
                     run_ctx['sx'] = total_sources[:3]
@@ -109,7 +108,28 @@ class FWIForward(nn.Module):
                 else: # client_idx == 1
                     run_ctx['sx'] = total_sources[3:]
                     run_ctx['gx'] = self.ctx['gx'][35:] # Partition receivers
-            
+            elif scenario == '3A':
+                if client_idx == 0:
+                    run_ctx['sx'] = total_sources[:4]
+                    run_ctx['gx'] = self.ctx['gx'][:24] # Partition receivers
+                elif client_idx == 1:
+                    run_ctx['sx'] = total_sources[3:7]
+                    run_ctx['gx'] = self.ctx['gx'][24:47] # Partition receivers
+                else: # client_idx == 2
+                    run_ctx['sx'] = total_sources[6:10]
+                    run_ctx['gx'] = self.ctx['gx'][47:] # Partition receivers
+            elif scenario == '3B':
+                if client_idx == 0:
+                    run_ctx['sx'] = total_sources[1:3]
+                    run_ctx['gx'] = self.ctx['gx'][:24] # Partition receivers
+                elif client_idx == 1:
+                    run_ctx['sx'] = total_sources[3:7]  
+                    run_ctx['gx'] = self.ctx['gx'][24:47] # Partition receivers
+                else: # client_idx == 2
+                    run_ctx['sx'] = total_sources[7:9]
+                    run_ctx['gx'] = self.ctx['gx'][47:] # Partition receivers
+            else:
+                raise NotImplementedError(f"Scenario '{scenario}' is not defined.")
             run_ctx['ns'] = len(run_ctx['sx'])
 
         # The rest of the code runs with the correctly configured run_ctx

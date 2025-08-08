@@ -1,6 +1,6 @@
 path:
     velocity_data_path: "dataset/velocity_model/"
-    client_seismic_data_path: "dataset/seismic_data/2B/" # Make sure this path is correct
+    client_seismic_data_path: "dataset/seismic_data/2A/" # Make sure this path is correct
     gt_seismic_data_path: "dataset/seismic_data/5_sources/" # Make sure this path is correct
     model_path: "pretrained_model/model.pt"
     output_path: "experiment_result/"
@@ -12,10 +12,10 @@ federated:
 
 experiment:
     strategy: "FedAvgM"
-    regularization: "Diffusion" # Make sure correct
+    regularization: "Total_Variation" # Make sure correct
     server_momentum: 0.9
     num_clients: 2 # Make sure correct
-    scenario_flag: 2B # Make sure correct
+    scenario_flag: 2A # Make sure correct
 
 resources:
     num_cpus_per_client: 1

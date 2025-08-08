@@ -1,7 +1,7 @@
 path:
     velocity_data_path: "dataset/velocity_model/"
-    client_seismic_data_path: "dataset/seismic_data/2B/" # Make sure this path is correct
-    gt_seismic_data_path: "dataset/seismic_data/5_sources/" # Make sure this path is correct
+    client_seismic_data_path: "dataset/seismic_data/2C/" # Make sure this path is correct
+    gt_seismic_data_path: "dataset/seismic_data/6_sources/" # Make sure this path is correct
     model_path: "pretrained_model/model.pt"
     output_path: "experiment_result/"
 
@@ -15,7 +15,7 @@ experiment:
     regularization: "Diffusion" # Make sure correct
     server_momentum: 0.9
     num_clients: 2 # Make sure correct
-    scenario_flag: 2B # Make sure correct
+    scenario_flag: 2C # Make sure correct
 
 resources:
     num_cpus_per_client: 1
@@ -42,5 +42,6 @@ forward:
     sz: 10
     gz: 10
     ng: 70
-    ns: 5
-    sx: null
+    ns: 6
+    sx: [10, 15, 20, 34, 52, 69]
+

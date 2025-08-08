@@ -163,7 +163,7 @@ def run_full_experiment(config_path: str):
     fit_config_fn = get_fit_config_fn(config)
 
     # --- 2. SETUP EXPERIMENT LOOP ---
-    families = ['CF', 'CV', 'FF', 'FV']
+    families = ['CF'] 
     all_results = {'individual_runs': [], 'family_histories': {}, 'overall_history': {}}
     
     # Loop over 4 families
@@ -172,7 +172,7 @@ def run_full_experiment(config_path: str):
         print(f"\n--- Starting Family: {family} ---")
         
         # Loop over 10 instances in the family
-        for i in range(10):
+        for i in range(1):
             print(f"-- Running Instance: {family}{i} --")
             
             # --- 3. RE-INITIALIZE FOR EACH RUN ---
@@ -219,8 +219,7 @@ def run_full_experiment(config_path: str):
                 diffusion_args=diffusion_args,
                 diffusion_state_dict=diffusion_state_dict
             )
-            ray_temp_dir = os.path.join("./ray_temp")
-            os.makedirs(ray_temp_dir, exist_ok=True)
+
             # --- 4. RUN ONE SIMULATION ---
             history = fl.simulation.start_simulation(
                 client_fn=client_fn_instance,
@@ -228,7 +227,7 @@ def run_full_experiment(config_path: str):
                 config=fl.server.ServerConfig(num_rounds=config.federated.num_rounds),
                 strategy=strategy,
                 client_resources={"num_gpus": 0.5} if device.type == "cuda" else {},
-                ray_init_args={"include_dashboard": False, "_temp_dir": ray_temp_dir}
+                ray_init_args={"include_dashboard": False}
             )
 
             # --- 5. STORE INDIVIDUAL RESULTS ---

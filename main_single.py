@@ -1,5 +1,5 @@
 import argparse
-from run_fast import run_full_experiment
+from run_single import run_full_experiment
 
 if __name__ == "__main__":
     # Set up argument parser

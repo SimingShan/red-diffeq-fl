@@ -1,20 +1,25 @@
 path:
-    velocity_data_path: "data/velocity_model"
-    seismic_data_path: "data/seismic_data"
+    velocity_data_path: "dataset/velocity_model/"
+    client_seismic_data_path: "dataset/seismic_data/3B/" # Make sure this path is correct
+    gt_seismic_data_path: "dataset/seismic_data/10_sources/" # Make sure this path is correct
     model_path: "pretrained_model/model.pt"
     output_path: "experiment_result/"
 
 federated:
-    num_rounds: 750
+    num_rounds: 600
     local_epochs: 5
     local_lr: 0.01
 
 experiment:
     strategy: "FedAvgM"
-    regularization: "Total_Variation"
+    regularization: "Diffusion" # Make sure correct
     server_momentum: 0.9
-    num_clients: 5
-    scenario_flag: null
+    num_clients: 3 # Make sure correct
+    scenario_flag: 3B # Make sure correct
+
+resources:
+    num_cpus_per_client: 1
+    num_gpus_per_client: 0.3
 
 diffusion:
     dim: 64
@@ -37,5 +42,5 @@ forward:
     sz: 10
     gz: 10
     ng: 70
-    ns: 5
-
+    ns: 10 # Make sure correct
+    sx: null

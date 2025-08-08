@@ -13,6 +13,10 @@ class FederatedConfig(BaseModel):
     local_epochs: int
     local_lr: float
 
+class ResourcesConfig(BaseModel):
+    num_cpus_per_client: float
+    num_gpus_per_client: float
+
 class ExperimentConfig(BaseModel):
     strategy: str
     regularization: Optional[str] = None
@@ -42,6 +46,7 @@ class ForwardConfig(BaseModel):
     gz: int
     ng: int 
     ns: int
+    sx: Optional[list] = None
 
 class AppConfig(BaseModel):
     path: PathConfig
@@ -49,6 +54,7 @@ class AppConfig(BaseModel):
     experiment: ExperimentConfig
     diffusion: DiffusionConfig
     forward: ForwardConfig
+    resources: ResourcesConfig
 
 def load_config(path):
     with open(path) as f:
