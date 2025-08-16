@@ -20,6 +20,7 @@ class ResourcesConfig(BaseModel):
 class ExperimentConfig(BaseModel):
     strategy: str
     regularization: Optional[str] = None
+    reg_lambda: float
     server_momentum: float  #for FedAvgM
     num_clients: int
     scenario_flag: Optional[str] = None

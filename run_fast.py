@@ -1,6 +1,3 @@
-# ========================
-# Standard library imports
-# ========================
 from datetime import datetime
 import os
 import pickle
@@ -9,9 +6,6 @@ from typing import Dict, List, Optional, Tuple
 import warnings
 import yaml
 from omegaconf import OmegaConf
-# =========================
-# Third-party library imports
-# =========================
 import numpy as np
 import torch
 import torch.multiprocessing as mp
@@ -29,12 +23,7 @@ from flwr.common import (
     parameters_to_ndarrays,
 )
 from flwr.server.strategy import FedAvg, FedAvgM, FedOpt, FedProx
-
-# =========================
-# Local/project imports
-# =========================
 from configs.config_utils import AppConfig, load_config
-
 from scripts.data_utils.data_trans import (
     s_denormalize,
     s_normalize,
@@ -43,7 +32,6 @@ from scripts.data_utils.data_trans import (
     v_normalize,
 )
 import scripts.data_utils.pytorch_ssim  # module has side effects / functions
-
 from scripts.diffusion_models.diffusion_model import *  # TODO: make explicit
 from scripts.flwr.flwr_client import *                 # TODO: make explicit
 from scripts.flwr.flwr_evaluation import get_evaluate_fn
@@ -83,7 +71,8 @@ def get_fit_config_fn(config):
             "local_epochs": config.federated.local_epochs,
             "local_lr": config.federated.local_lr,
             "total_rounds": config.federated.num_rounds,
-            "regularization": config.experiment.regularization
+            "regularization": config.experiment.regularization,
+            "reg_lambda": config.experiment.reg_lambda
         }
     return fit_config_fn
 

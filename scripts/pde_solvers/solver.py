@@ -74,7 +74,7 @@ class FWIForward(nn.Module):
             total_sources = (np.linspace(0, self.ctx['n_grid'] - 1, num=5) * self.ctx['dx'])
         elif scenario == '2C':
             # Provided as grid indices in the dataset generation notebook; convert to meters
-            total_sources = np.array([10.0, 15.0, 20.0, 34.0, 52.0, 69.0]) * self.ctx['dx']
+            total_sources = np.array([10, 15, 20, 34, 52, 69]) * self.ctx['dx']
         elif scenario == '3A' or scenario == '3B':
             total_sources = np.linspace(0, self.ctx['n_grid'] - 1, num=10) * self.ctx['dx']
         else:

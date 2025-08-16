@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple, Optional
 import flwr as fl
 from flwr.common import Metrics, NDArrays, Scalar, Parameters, ndarrays_to_parameters, parameters_to_ndarrays
 from .flwr_utils import *
+from .regularizations import *
 
 def get_evaluate_fn(
     model_shape: tuple,
@@ -22,7 +23,8 @@ def get_evaluate_fn(
 
     def evaluate(server_round: int, parameters: NDArrays, config_from_flwr: Dict[str, Scalar]) -> Optional[Tuple[float, Dict[str, Scalar]]]:
         scenario_flag = config.experiment.scenario_flag
-
+        regularization = config.experiment.regularization
+        reg_lambda = config.experiment.reg_lambda
         assert config is not None, "Config must be provided for evaluation."
 
         if server_round == total_rounds:
@@ -36,7 +38,7 @@ def get_evaluate_fn(
             seismic_data_dev = seismic_data.to(device)
             seismic_loss = l1_loss_fn(seismic_data_dev.float(), predicted_seismic.float())
             diffusion_loss = torch.tensor(0.0, device=device)
-            if diffusion_model is not None:
+            if diffusion_model is not None and regularization == 'diffusion':
                 batch_size = seismic_data_dev.shape[0]
                 time = torch.randint(0, diffusion_model.num_timesteps, (1,)).item()
                 time_cond = torch.full((batch_size,), time, device=device, dtype=torch.long)
@@ -50,11 +52,20 @@ def get_evaluate_fn(
                 model_predictions = diffusion_model.model_predictions(
                     x_t, time_cond, self_cond, clip_x_start=True, rederive_pred_noise=True
                 )
-                pred_noise, x_start = model_predictions.pred_noise, model_predictions.pred_x_start
+                pred_noise, _ = model_predictions.pred_noise, model_predictions.pred_x_start
                 et = pred_noise
                 diffusion_loss = torch.mul((et - noise), model).mean()
+                reg_loss = diffusion_loss
+                total_loss = reg_lambda * diffusion_loss + seismic_loss 
+            elif regularization == 'Total_Variation':
+                reg_loss = total_variation_loss(model_input)
+                total_loss = seismic_loss + reg_lambda * reg_loss
+            elif regularization == 'Tiknov':
+                reg_loss = tikhonov_loss(model_input)
+                total_loss = seismic_loss + reg_lambda * reg_loss
+            elif regularization == 'None':
+                total_loss = seismic_loss
 
-            total_loss = 0.75 * diffusion_loss + seismic_loss 
             vm_sample = model_input.detach().to('cpu')
             vm_true_norm = data_trans.v_normalize(mu_true)
             if vm_true_norm.dim() == 2:
@@ -83,7 +94,7 @@ def get_evaluate_fn(
 
         return total_loss.item(), {
             'seismic_loss': seismic_loss.item(),
-            'diffusion_loss': diffusion_loss.item(),
+            'reg_loss': reg_loss.item(),
             'mae': mae.item(), 'rmse': rmse, 'ssim': ssim_val.item()
         }
 

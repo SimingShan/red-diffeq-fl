@@ -13,6 +13,7 @@ federated:
 experiment:
     strategy: "FedAvgM"
     regularization: "None"
+    reg_lambda: 0.0
     server_momentum: 0.9
     num_clients: 2 # Make sure correct
     scenario_flag: 2B # Make sure correct

@@ -60,7 +60,7 @@ class FwiClient(fl.client.NumPyClient):
         server_round: int = int(config["server_round"])
         # Do not cast to string; preserve None so baseline (no regularization) works
         regularization = config["regularization"]
-
+        reg_lambda = config["reg_lambda"]
         global_step = (server_round - 1) * local_epochs
         optimizer_local = torch.optim.Adam([local_model], lr=local_lr)
         scheduler_local = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -107,13 +107,13 @@ class FwiClient(fl.client.NumPyClient):
                 pred_noise, x_start = model_predictions.pred_noise, model_predictions.pred_x_start
                 et = pred_noise.detach()
                 diffusion_loss = torch.mul((et - noise).detach(), local_model).mean()
-                total_loss = seismic_loss + 0.75 * diffusion_loss # we fix lambda = 0.75
+                total_loss = seismic_loss + reg_lambda * diffusion_loss # we fix lambda = 0.75
             elif regularization == "Total_Variation":
                 reg_loss = total_variation_loss(model_input)
-                total_loss = seismic_loss + 0.1 * reg_loss
+                total_loss = seismic_loss + reg_lambda * reg_loss
             elif regularization == "Tiknov":
                 reg_loss = tikhonov_loss(model_input)
-                total_loss = seismic_loss + 0.1 * reg_loss
+                total_loss = seismic_loss + reg_lambda * reg_loss
             elif regularization == "None":
                 total_loss = seismic_loss
                 
