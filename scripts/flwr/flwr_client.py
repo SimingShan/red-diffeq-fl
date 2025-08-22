@@ -7,6 +7,7 @@ from flwr.common import Context, Metrics, NDArrays, Scalar, Parameters, ndarrays
 from scripts.diffusion_models.diffusion_model import *
 from .flwr_utils import *
 from .regularizations import *
+import pickle
 
 class FwiClient(fl.client.NumPyClient):
     def __init__(self, cid: str, device: torch.device,
@@ -26,6 +27,9 @@ class FwiClient(fl.client.NumPyClient):
         self.diffusion_model = None
         self.num_total_clients = num_total_clients
         self.scenario_flag = config.experiment.scenario_flag
+        self.model_history = []
+        self.epoch_metrics_history = []
+        self.round_data = {}  # Store round-specific data
         if diffusion_state_dict is not None and diffusion_model_structure_args is not None:
             unet_model = Unet(
                 dim=diffusion_model_structure_args.get('dim', 64),
@@ -71,7 +75,13 @@ class FwiClient(fl.client.NumPyClient):
     
         for _ in range(global_step):
             scheduler_local.step() # fast forward learning rate
-        
+        epoch_metrics = []
+        initial_model = ndarrays_to_tensor(parameters, self.device)
+        self.model_history.append({
+            "round": config["server_round"],
+            "epoch": 0,
+            "model": tensor_to_ndarrays(initial_model)
+        })
         for epoch in range(local_epochs):
             optimizer_local.zero_grad()
             model_input = local_model[:, :, 1:-1, 1:-1]
@@ -107,7 +117,8 @@ class FwiClient(fl.client.NumPyClient):
                 pred_noise, x_start = model_predictions.pred_noise, model_predictions.pred_x_start
                 et = pred_noise.detach()
                 diffusion_loss = torch.mul((et - noise).detach(), local_model).mean()
-                total_loss = seismic_loss + reg_lambda * diffusion_loss # we fix lambda = 0.75
+                total_loss = seismic_loss + reg_lambda * diffusion_loss 
+                reg_loss = diffusion_loss
             elif regularization == "Total_Variation":
                 reg_loss = total_variation_loss(model_input)
                 total_loss = seismic_loss + reg_lambda * reg_loss
@@ -116,23 +127,57 @@ class FwiClient(fl.client.NumPyClient):
                 total_loss = seismic_loss + reg_lambda * reg_loss
             elif regularization == "None":
                 total_loss = seismic_loss
-                
+                reg_loss = torch.tensor(0.0, device=self.device)
+            epoch_metrics.append({
+            "epoch": epoch,
+            "seismic_loss": float(seismic_loss.item()),
+            "total_loss": float(total_loss.item()),
+            "reg_loss": float(reg_loss.item())})
+
             total_loss.backward()
             optimizer_local.step()
             scheduler_local.step() 
             local_model.data.clamp_(-1, 1)
-    
+
+        if config["server_round"] % 10 == 0:
+            self.model_history.append({
+                "round": config["server_round"],
+                "epoch": epoch + 1,  # Use epoch + 1 to be consistent
+                "model": tensor_to_ndarrays(local_model)
+            })
+
         updated_ndarrays = tensor_to_ndarrays(local_model)
         num_examples = self.local_data.numel()
         
+        # Serialize complex data to bytes for safe transport
+        client_round_data = {
+            "epoch_metrics": epoch_metrics,
+            "model_history": self.model_history.copy(),
+        }
+        serialized_data = pickle.dumps(client_round_data)
+
+        # IMPORTANT: Clear history for the next round to prevent it from growing indefinitely
+        self.model_history.clear()
+        
+        # Only return simple types in metrics for Flower compatibility
         return updated_ndarrays, num_examples, {
             "seismic_loss": float(seismic_loss.item()),
             "diffusion_loss": float(diffusion_loss.item()),
-            "total_loss": float(total_loss.item())
+            "total_loss": float(total_loss.item()),
+            "reg_loss": float(reg_loss.item()),
+            "detailed_data": serialized_data  # Add the serialized bytes
         }
 
     def evaluate(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[float, int, Dict[str, Scalar]]:
         return 0.0, 0, {}
+    
+    def get_round_data(self, round_number: int) -> Optional[Dict]:
+        """Get stored data for a specific round."""
+        return self.round_data.get(round_number, None)
+    
+    def get_all_round_data(self) -> Dict:
+        """Get all stored round data."""
+        return self.round_data
     
 def client_fn_factory(partitions: List[torch.Tensor], 
                       config, device, fwi_forward,
@@ -170,3 +215,20 @@ def fit_config_fn(server_round, config=None):
         "total_rounds": config.federated.num_rounds, 
         "regularization": config.experiment.regularization
     }
+
+def fit_metrics_fn(metrics: List[Tuple[int, Metrics]]) -> Metrics:
+    """Aggregate client metrics."""
+    # metrics is a list of (client_id, client_metrics) tuples
+    aggregated = {}
+    for client_id, client_metrics in metrics:
+        for key, value in client_metrics.items():
+            if key not in aggregated:
+                aggregated[key] = []
+            aggregated[key].append(value)
+    
+    # Calculate means
+    final_metrics = {}
+    for key, values in aggregated.items():
+        final_metrics[key] = sum(values) / len(values)
+    
+    return final_metrics

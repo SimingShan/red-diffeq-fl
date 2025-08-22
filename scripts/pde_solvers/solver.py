@@ -120,13 +120,13 @@ class FWIForward(nn.Module):
                     run_ctx['gx'] = self.ctx['gx'][47:] # Partition receivers
             elif scenario == '3B':
                 if client_idx == 0:
-                    run_ctx['sx'] = total_sources[1:3]
+                    run_ctx['sx'] = total_sources[0:3]
                     run_ctx['gx'] = self.ctx['gx'][:24] # Partition receivers
                 elif client_idx == 1:
                     run_ctx['sx'] = total_sources[3:7]  
                     run_ctx['gx'] = self.ctx['gx'][24:47] # Partition receivers
                 else: # client_idx == 2
-                    run_ctx['sx'] = total_sources[7:9]
+                    run_ctx['sx'] = total_sources[7:10]
                     run_ctx['gx'] = self.ctx['gx'][47:] # Partition receivers
             else:
                 raise NotImplementedError(f"Scenario '{scenario}' is not defined.")

@@ -14,14 +14,8 @@ def total_variation_loss(mu):
 
 def tikhonov_loss(mu):
     """Computes L2 regularization (Tikhonov) for the velocity map (mu)."""
-    diff_x = mu[:, :, :, 1:] - mu[:, :, :, :-1]
-    diff_y = mu[:, :, 1:, :] - mu[:, :, :-1, :]
-    
-    # Compute the L2 loss separately for x and y directions
-    l2_loss_x = torch.mean(diff_x ** 2)
-    l2_loss_y = torch.mean(diff_y ** 2)
-    
-    # Sum the losses from both directions
-    l2_loss = l2_loss_x + l2_loss_y
+    diff_x = mu[:, :, :, 1:] - mu[:, :, :, :-1] # Horizontal differences
+    diff_y = mu[:, :, 1:, :] - mu[:, :, :-1, :] # Vertical differences    
+    l2_loss = torch.mean(diff_x ** 2) + torch.mean(diff_y ** 2)
     
     return l2_loss

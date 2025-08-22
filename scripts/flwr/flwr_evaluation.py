@@ -30,6 +30,8 @@ def get_evaluate_fn(
         if server_round == total_rounds:
             print(f"Server evaluation: Capturing final model parameters at round {server_round}.")
             final_params_store["final_model"] = parameters
+        elif server_round % 10 == 0:
+            final_params_store[f"model_round_{server_round}"] = parameters
 
         model = ndarrays_to_tensor(parameters, device)
         with torch.no_grad():
@@ -38,7 +40,7 @@ def get_evaluate_fn(
             seismic_data_dev = seismic_data.to(device)
             seismic_loss = l1_loss_fn(seismic_data_dev.float(), predicted_seismic.float())
             diffusion_loss = torch.tensor(0.0, device=device)
-            if diffusion_model is not None and regularization == 'diffusion':
+            if diffusion_model is not None and regularization == 'Diffusion':
                 batch_size = seismic_data_dev.shape[0]
                 time = torch.randint(0, diffusion_model.num_timesteps, (1,)).item()
                 time_cond = torch.full((batch_size,), time, device=device, dtype=torch.long)
@@ -65,7 +67,8 @@ def get_evaluate_fn(
                 total_loss = seismic_loss + reg_lambda * reg_loss
             elif regularization == 'None':
                 total_loss = seismic_loss
-
+                reg_loss = torch.tensor(0.0, device=device)
+                
             vm_sample = model_input.detach().to('cpu')
             vm_true_norm = data_trans.v_normalize(mu_true)
             if vm_true_norm.dim() == 2:

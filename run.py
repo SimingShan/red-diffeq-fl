@@ -1,23 +1,18 @@
-# ========================
-# Standard library imports
-# ========================
 from datetime import datetime
 import os
+import glob
 import pickle
 import tempfile
 from typing import Dict, List, Optional, Tuple
 import warnings
 import yaml
 from omegaconf import OmegaConf
-# =========================
-# Third-party library imports
-# =========================
 import numpy as np
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
 from torch.optim import Adam
-
+from pathlib import Path
 import flwr as fl
 from flwr.common import (
     Context,
@@ -28,13 +23,9 @@ from flwr.common import (
     ndarrays_to_parameters,
     parameters_to_ndarrays,
 )
+import torch.nn.functional as F
 from flwr.server.strategy import FedAvg, FedAvgM, FedOpt, FedProx
-
-# =========================
-# Local/project imports
-# =========================
 from configs.config_utils import AppConfig, load_config
-
 from scripts.data_utils.data_trans import (
     s_denormalize,
     s_normalize,
@@ -42,37 +33,13 @@ from scripts.data_utils.data_trans import (
     v_denormalize,
     v_normalize,
 )
+import scripts.data_utils.data_trans as data_trans
 import scripts.data_utils.pytorch_ssim  # module has side effects / functions
-
 from scripts.diffusion_models.diffusion_model import *  # TODO: make explicit
 from scripts.flwr.flwr_client import *                 # TODO: make explicit
 from scripts.flwr.flwr_evaluation import get_evaluate_fn
 from scripts.flwr.flwr_utils import *                  # TODO: make explicit
 from scripts.pde_solvers.solver import FWIForward
-
-
-def average_histories(histories: list):
-    """Averages a list of Flower History objects."""
-    if not histories:
-        return {}
-
-    # Average losses
-    avg_loss = np.mean([loss for _, loss in histories[0].losses_centralized], axis=0).tolist()
-    
-    # Average metrics
-    avg_metrics = {}
-    # Get all metric keys from the first history's metrics dict
-    metric_keys = histories[0].metrics_centralized.keys()
-    
-    for key in metric_keys:
-        # Stack all histories for the current metric key
-        stacked_metrics = np.array([h.metrics_centralized[key] for h in histories])
-        # Average across histories (axis 0)
-        avg_metric = np.mean([value for _, value in stacked_metrics[0]], axis=0).tolist()
-        avg_metrics[key] = avg_metric
-        
-    return {"losses_centralized": avg_loss, "metrics_centralized": avg_metrics}
-
 
 def get_fit_config_fn(config):
     """Factory function to create the on_fit_config_fn."""
@@ -83,16 +50,60 @@ def get_fit_config_fn(config):
             "local_epochs": config.federated.local_epochs,
             "local_lr": config.federated.local_lr,
             "total_rounds": config.federated.num_rounds,
-            "regularization": config.experiment.regularization
+            "regularization": config.experiment.regularization,
+            "reg_lambda": config.experiment.reg_lambda
         }
     return fit_config_fn
 
 
-def run_full_experiment(config_path: str):
+def fit_metrics_fn(metrics: List[Tuple[int, Metrics]]) -> Metrics:
+    """Aggregate client metrics."""
+    aggregated = {}
+    
+    # Store deserialized detailed data separately
+    detailed_data_store = []
+
+    for client_id, client_metrics in metrics:
+        for key, value in client_metrics.items():
+            if key == "detailed_data":
+                # Deserialize the data and store it
+                deserialized = pickle.loads(value)
+                detailed_data_store.append({"client_id": client_id, "data": deserialized})
+                continue
+            
+            if key not in aggregated:
+                aggregated[key] = []
+            aggregated[key].append(value)
+    
+    # Calculate means and stds for simple numeric metrics
+    final_metrics = {}
+    for key, values in aggregated.items():
+        if isinstance(values[0], (int, float)):
+            final_metrics[f"{key}_mean"] = sum(values) / len(values)
+            final_metrics[f"{key}_std"] = np.std(values)
+        else:
+            final_metrics[key] = values # Should not happen with new client logic
+            
+    # Add the rich, detailed data to the final metrics dictionary
+    if detailed_data_store:
+        final_metrics["detailed_client_data"] = detailed_data_store
+    
+    return final_metrics
+
+
+def run_full_experiment(config_path: str, process_id: int, run_name: str):
     """
     Loads configuration, runs the full suite of FL experiments for all data families
     and instances, aggregates results, and saves them to a single file.
     """
+    assert process_id is not None, "process_id is required"
+    assert process_id in [1,2], "process_id must be 1 (CF, CV) or 2 (FF, FV)"
+    assert config_path is not None, "config_path is required"
+    assert run_name in ['main', 'tuning'], "run_name must be 'main' or 'tuning'"
+
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
     config = OmegaConf.load(config_path)
     mp.set_start_method('spawn', force=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -100,28 +111,35 @@ def run_full_experiment(config_path: str):
     print("--- STARTING FULL EXPERIMENT RUN ---")
     print(f"Strategy: {config.experiment.strategy}, Regularization: {config.experiment.regularization}, Scenario: {config.experiment.scenario_flag}")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"{config.experiment.strategy}_{config.experiment.regularization}_{config.experiment.scenario_flag}_{timestamp}"
-    main_output_dir = os.path.join(config.path.output_path, run_name)
-    os.makedirs(main_output_dir, exist_ok=True)
-    print(f"Results for this run will be saved in: {main_output_dir}")
-
-    # Create a sub-directory for intermediate files
-    intermediate_path = os.path.join(main_output_dir, "intermediate_results")
-    os.makedirs(intermediate_path, exist_ok=True)
+    
+    # Include reg_lambda in directory name for hyperparameter tuning to separate different lambda values
+    if run_name == "tuning":
+        base_dir_name = f"{run_name}_{config.experiment.strategy}_{config.experiment.regularization}_{config.experiment.reg_lambda}_{config.experiment.scenario_flag}"
+    else:
+        base_dir_name = f"{run_name}_{config.experiment.strategy}_{config.experiment.regularization}_{config.experiment.scenario_flag}"
+    
+    # Check for existing directories
+    existing_dirs = glob.glob(os.path.join(config.path.output_path, f"{base_dir_name}_*"))
+    if existing_dirs:
+        # Use the most recent existing directory
+        main_output_dir = max(existing_dirs, key=os.path.getctime)
+        print(f"Using existing directory: {main_output_dir}")
+    else:
+        # Create new directory
+        main_output_dir = os.path.join(config.path.output_path, f"{base_dir_name}_{timestamp}")
+        os.makedirs(main_output_dir, exist_ok=True)
+        print(f"Created new directory: {main_output_dir}")
 
     # --- 1. SETUP SHARED COMPONENTS ---
     # These components are the same for all 40 runs.
-    
     # Forward Solver
     ctx = {'n_grid': config.forward.n_grid, 'nt': config.forward.nt, 'dx': config.forward.dx, 
            'nbc': config.forward.nbc, 'dt': config.forward.dt, 'f': config.forward.f,
            'sz': config.forward.sz, 'gz': config.forward.gz, 'ng': config.forward.ng}
     fwi_forward = FWIForward(ctx, device, normalize=True, v_denorm_func=v_denormalize, s_norm_func=s_normalize_none)
-
     server_diffusion_model = None
     diffusion_state_dict = None
     diffusion_args = None
-    # Diffusion Model (if used)
     diffusion_state_dict = None
     if config.experiment.regularization == "Diffusion":
             diffusion_args = {
@@ -138,7 +156,7 @@ def run_full_experiment(config_path: str):
                 flash_attn=diffusion_args.get('flash_attn'),
                 channels=diffusion_args.get('channels')
             )
-
+            #unet_model = torch.compile(unet_model, mode="max-autotune")
             diffusion = GaussianDiffusion(
                 unet_model,
                 image_size=diffusion_args.get('image_size'),
@@ -163,12 +181,21 @@ def run_full_experiment(config_path: str):
     fit_config_fn = get_fit_config_fn(config)
 
     # --- 2. SETUP EXPERIMENT LOOP ---
-    families = ['CF', 'CV', 'FF', 'FV']
-    all_results = {'individual_runs': [], 'family_histories': {}, 'overall_history': {}}
+    if process_id == 1:
+        families = ['CF', 'CV']
+    elif process_id == 2:
+        families = ['FF', 'FV']
     
-    # Loop over 4 families
+    all_results = {'individual_runs': []}
+    family_to_vm = {fam: np.load(f"{config.path.velocity_data_path}/{fam}.npy", mmap_mode="r") for fam in families}
+    family_to_gt = {fam: np.load(f"{config.path.gt_seismic_data_path}/{fam}.npy", mmap_mode="r") for fam in families}
+    family_to_clients = {
+        fam: [np.load(f"{config.path.client_seismic_data_path}/client{c+1}/{fam}.npy", mmap_mode="r")
+            for c in range(config.experiment.num_clients)]
+        for fam in families
+}
+
     for family in families:
-        family_histories = []
         print(f"\n--- Starting Family: {family} ---")
         
         # Loop over 10 instances in the family
@@ -179,12 +206,14 @@ def run_full_experiment(config_path: str):
             # This is critical to ensure each of the 40 runs is independent.
             
             # Load data for this specific instance
-            vm_data = torch.tensor(np.load(f"{config.path.velocity_data_path}/{family}.npy")[i:i+1,:]).float()
-            gt_seismic_data = torch.tensor(np.load(f"{config.path.gt_seismic_data_path}/{family}.npy")[i:i+1,:]).float().to(device)
-            client_data_list = []
-            for client_idx in range(config.experiment.num_clients):
-                client_data = np.load(f"{config.path.client_seismic_data_path}/client{client_idx+1}/{family}.npy")[i:i+1,:]
-                client_data_list.append(torch.tensor(client_data).float().to(device))
+            vm_np = family_to_vm[family][i:i+1, :]
+            gt_np = family_to_gt[family][i:i+1, :]
+            client_nps = [arr[i:i+1, :] for arr in family_to_clients[family]]
+
+            vm_data = torch.from_numpy(np.ascontiguousarray(vm_np)).float()                     # CPU
+            gt_seismic_data = torch.from_numpy(np.ascontiguousarray(gt_np)).float().pin_memory().to(device, non_blocking=True)
+            client_data_list = [torch.from_numpy(np.ascontiguousarray(x)).float().pin_memory().to(device, non_blocking=True)
+                                for x in client_nps]
 
             # Create a fresh initial model
             initial_model = data_trans.prepare_initial_model(vm_data, initial_type='smoothed', sigma=config.forward.initial_sigma)
@@ -204,13 +233,29 @@ def run_full_experiment(config_path: str):
             
             # Create a fresh strategy instance with the new initial model
             strategy_class = {"FedAvg": FedAvg, "FedAvgM": FedAvgM, "FedProx": FedProx}[config.experiment.strategy]
-            strategy = strategy_class(
-                fraction_fit=1.0, min_fit_clients=config.experiment.num_clients,
-                min_available_clients=config.experiment.num_clients, evaluate_fn=evaluate_fn,
-                fraction_evaluate=0.0, on_fit_config_fn=fit_config_fn,
-                initial_parameters=ndarrays_to_parameters(tensor_to_ndarrays(initial_model.to(device))),
-                server_momentum=config.experiment.server_momentum # Example param
-            )
+            
+            # Base strategy parameters
+            strategy_params = {
+                "fraction_fit": 1.0, 
+                "min_fit_clients": config.experiment.num_clients,
+                "min_available_clients": config.experiment.num_clients, 
+                "evaluate_fn": evaluate_fn,
+                "fraction_evaluate": 0.0, 
+                "on_fit_config_fn": fit_config_fn,
+                "initial_parameters": ndarrays_to_parameters(tensor_to_ndarrays(initial_model.to(device))),
+            }
+            
+            # Add strategy-specific parameters
+            if config.experiment.strategy == "FedAvgM":
+                strategy_params["server_momentum"] = config.experiment.server_momentum
+            elif config.experiment.strategy == "FedProx":
+                # FedProx might need additional parameters
+                pass
+            
+            # Add fit_metrics_aggregation_fn for client metrics collection (both FedAvg and FedAvgM support it)
+            strategy_params["fit_metrics_aggregation_fn"] = fit_metrics_fn
+            
+            strategy = strategy_class(**strategy_params)
             
             # Create a fresh client function instance with the correct data partitions
             client_fn_instance = client_fn_factory(
@@ -219,16 +264,22 @@ def run_full_experiment(config_path: str):
                 diffusion_args=diffusion_args,
                 diffusion_state_dict=diffusion_state_dict
             )
-            ray_temp_dir = os.path.join("./ray_temp")
+            ray_temp_dir = "/tmp/rfl" 
             os.makedirs(ray_temp_dir, exist_ok=True)
+
+            # Cap CPU threads to avoid oversubscription
+            os.environ["OMP_NUM_THREADS"] = "1"
+            os.environ["MKL_NUM_THREADS"] = "1"
+            torch.set_num_threads(1)
             # --- 4. RUN ONE SIMULATION ---
             history = fl.simulation.start_simulation(
                 client_fn=client_fn_instance,
                 num_clients=config.experiment.num_clients,
                 config=fl.server.ServerConfig(num_rounds=config.federated.num_rounds),
                 strategy=strategy,
-                client_resources={"num_gpus": 0.5} if device.type == "cuda" else {},
-                ray_init_args={"include_dashboard": False, "_temp_dir": ray_temp_dir}
+                client_resources={"num_gpus": config.resources.num_gpus_per_client, 
+                 "num_cpus": config.resources.num_cpus_per_client} if device.type == "cuda" else {},
+                ray_init_args={"include_dashboard": False, "_temp_dir": ray_temp_dir},
             )
 
             # --- 5. STORE INDIVIDUAL RESULTS ---
@@ -236,32 +287,26 @@ def run_full_experiment(config_path: str):
             final_model = ndarrays_to_tensor(saved_ndarrays, device)
             
             run_result = {
-                "family": family,
-                "instance": i,
-                "final_model": final_model.cpu().detach().numpy(),
-                "history": history
+            "family": family,
+            "instance": i,
+            "final_model": final_model.cpu().detach().numpy(),
+            "all_round_models": final_parameters_store,  # All models from all rounds
+            "history": history,  # Server-side metrics
+            "config": config
             }
+
             all_results['individual_runs'].append(run_result)
-            family_histories.append(history)
 
-            intermediate_filename = os.path.join(intermediate_path, f"{family}_{i}_result.pkl")
-            print(f"Saving intermediate result to: {intermediate_filename}")
-            with open(intermediate_filename, 'wb') as f:
+            result_filename = os.path.join(main_output_dir, f"{family}_{i}_result.pkl")
+
+            with open(result_filename, 'wb') as f:
                 pickle.dump(run_result, f)
-
-        # --- 6. CALCULATE AND STORE FAMILY MEAN HISTORY ---
-        all_results['family_histories'][family] = average_histories(family_histories)
+                    
         print(f"--- Finished Family: {family} ---")
 
-    # --- 7. CALCULATE AND STORE OVERALL MEAN HISTORY ---
-    all_individual_histories = [run['history'] for run in all_results['individual_runs']]
-    all_results['overall_history'] = average_histories(all_individual_histories)
-    
-    # --- 8. SAVE THE FINAL AGGREGATED FILE ---
-    # Save the final summary file inside the unique run directory
-    final_filename = os.path.join(main_output_dir, "aggregated_results.pkl")
-    with open(final_filename, 'wb') as f:
-        pickle.dump(all_results, f)
-        
-    print(f"\n--- FULL EXPERIMENT COMPLETE ---")
-    print(f"All results, including intermediates and the final aggregated file, are in: {main_output_dir}")
+    # --- 6. FINAL SUMMARY ---
+    print(f"\n--- EXPERIMENT COMPLETE ---")
+    print(f"Process {process_id} completed: {len(families)} families, {len(families) * 10} instances")
+    print(f"Individual results saved in: {main_output_dir}")
+
+    return all_results
