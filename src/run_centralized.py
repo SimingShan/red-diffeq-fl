@@ -62,11 +62,17 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
     diffusion.eval()
     ssim_loss = pytorch_ssim.SSIM(window_size=11)  
     Inversion = run_inversion(diffusion, data_trans, pytorch_ssim, config.experiment.regularization)
+    assert family is not None or process_id is not None, "Either family or process_id must be provided"
+    assert family is None or process_id is None, "Only one of family or process_id must be provided"
+    
+    if process_id is not None:
+        if process_id == 1:
+            families = ['CF', 'CV']
+        elif process_id == 2:
+            families = ['FF', 'FV']
+    else:
+        families = [family]
 
-    if process_id == 1:
-        families = ['CF', 'CV']
-    elif process_id == 2:
-        families = ['FF', 'FV']
 
     family_to_vm = {fam: np.load(f"{velocity_data_path}/{fam}.npy", mmap_mode="r") for fam in families}
     family_to_gt = {fam: np.load(f"{gt_seismic_data_path}/{fam}.npy", mmap_mode="r") for fam in families}
