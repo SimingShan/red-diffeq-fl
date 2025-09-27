@@ -1,6 +1,7 @@
 import argparse
-from run import run_full_experiment
-
+import os
+from src.run_federated import run_full_experiment
+from src.run_centralized import run_centralized
 if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Run Federated Waveform Inversion experiments.")
@@ -27,16 +28,28 @@ if __name__ == "__main__":
         "--run_name",
         type=str,
         required=True,
-        choices=['main', 'tuning'],
-        help="Run name: 'main' for main experiments, 'tuning' for hyperparameter tuning"
+        choices=['main', 'centralized'],
+        help="Run name: 'main' for main experiments, 'centralized' for centralized experiments"
     )
-    
+
     # Parse arguments
     args = parser.parse_args()
     
+    target_families = os.environ.get("RFL_TARGET_FAMILIES")
+    target_instances = os.environ.get("RFL_TARGET_INSTANCES")
+
     # Call the main experiment function with all required arguments
-    run_full_experiment(
-        config_path=args.config_path,
-        process_id=args.process_id,
-        run_name=args.run_name
-    )
+    if args.run_name == 'main':
+        run_full_experiment(
+            config_path=args.config_path,
+            process_id=args.process_id,
+            run_name=args.run_name,
+            target_families=target_families.split(',') if target_families else None,
+            target_instances=[int(x) for x in target_instances.split(',')] if target_instances else None,
+        )
+    elif args.run_name == 'centralized':
+        run_centralized(
+            config_path=args.config_path,
+            process_id=args.process_id,
+            run_name=args.run_name,
+        )
