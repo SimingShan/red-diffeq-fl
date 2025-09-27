@@ -38,9 +38,9 @@ def get_evaluate_fn(
             predicted_seismic = fwi_forward(model_input, scenario=scenario_flag, client_idx=None, num_clients=None)
             seismic_data_dev = seismic_data.to(device)
             loss_obs = results_dict.calcualte_seismic_loss(predicted_seismic, seismic_data_dev, loss_type = 'l1')
-            raw_reg_loss = results_dict.calcualte_raw_reg_loss(model_input, reg_lambda)
+            raw_reg_loss = results_dict.calcualte_raw_reg_loss(model, reg_lambda)
             total_loss = results_dict.calcualte_total_loss(loss_obs, raw_reg_loss, reg_lambda)
-            mae, rmse, ssim = results_dict.calculate_metrics(model_input, mu_true, seismic_data_dev)
+            mae, rmse, ssim = results_dict.calculate_metrics(model, mu_true, seismic_data_dev)
             results_dict.update(total_loss, loss_obs, raw_reg_loss, ssim, mae, rmse)
 
         return total_loss.item(), {

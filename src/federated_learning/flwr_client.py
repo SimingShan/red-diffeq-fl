@@ -89,8 +89,6 @@ class FwiClient(fl.client.NumPyClient):
         for epoch in range(local_epochs):
             optimizer_local.zero_grad()
             model_input = local_model[:, :, 1:-1, 1:-1]
-            
-            batch_size = self.local_data.shape[0]
             predicted_seismic = self.fwi_forward(model_input, client_idx=self.cid, 
                                                  scenario=self.scenario_flag,
                                                  num_clients=self.num_total_clients)
@@ -99,7 +97,7 @@ class FwiClient(fl.client.NumPyClient):
             seismic_loss = l1_loss_fn(self.local_data.float(), predicted_seismic.float())
             # Observation and regularization losses
             loss_obs = results_dict.calcualte_seismic_loss(predicted_seismic, self.local_data, loss_type)
-            raw_reg_loss = results_dict.calcualte_raw_reg_loss(model_input, reg_lambda)
+            raw_reg_loss = results_dict.calcualte_raw_reg_loss(local_model, reg_lambda)
             total_loss = results_dict.calcualte_total_loss(loss_obs, raw_reg_loss, reg_lambda)
 
             epoch_metrics.append({
