@@ -45,18 +45,29 @@ if __name__ == "__main__":
     # Parse arguments
     args = parser.parse_args()
     
-    target_families = os.environ.get("RFL_TARGET_FAMILIES")
-    target_instances = os.environ.get("RFL_TARGET_INSTANCES")
+    target_families_env = os.environ.get("RFL_TARGET_FAMILIES")
+    target_instances_env = os.environ.get("RFL_TARGET_INSTANCES")
 
     # Call the main experiment function with all required arguments
     if args.run_name == 'main':
+        # Determine targeted families/instances for federated run
+        # CLI --family overrides env RFL_TARGET_FAMILIES
+        cli_target_families = [args.family] if args.family else None
+        resolved_target_families = cli_target_families if cli_target_families else (target_families_env.split(',') if target_families_env else None)
+
+        # If both family and process_id are provided, we let the runner split 12/13 automatically,
+        # so do not pass target_instances unless explicitly set via env.
+        resolved_target_instances = (
+            [int(x) for x in target_instances_env.split(',')]
+            if target_instances_env else None
+        )
+
         run_full_experiment(
             config_path=args.config_path,
             process_id=args.process_id,
             run_name=args.run_name,
-            family=args.family,
-            target_families=target_families.split(',') if target_families else None,
-            target_instances=[int(x) for x in target_instances.split(',')] if target_instances else None,
+            target_families=resolved_target_families,
+            target_instances=resolved_target_instances,
         )
 
     elif args.run_name == 'centralized':

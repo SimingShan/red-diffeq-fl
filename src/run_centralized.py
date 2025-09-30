@@ -11,9 +11,9 @@ from datetime import datetime
 import glob
 import torch
 import pickle
-def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_Baseline'):
-    assert process_id is not None, "process_id is required"
-    assert process_id in [1,2], "process_id must be 1 (CF, CV) or 2 (FF, FV)"
+def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_Baseline', family = None):
+    #assert process_id is not None, "process_id is required"
+    #assert process_id in [1,2], "process_id must be 1 (CF, CV) or 2 (FF, FV)"
     assert config_path is not None, "config_path is required"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.backends.cudnn.benchmark = True
@@ -63,15 +63,24 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
     ssim_loss = pytorch_ssim.SSIM(window_size=11)  
     Inversion = run_inversion(diffusion, data_trans, pytorch_ssim, config.experiment.regularization)
     assert family is not None or process_id is not None, "Either family or process_id must be provided"
-    assert family is None or process_id is None, "Only one of family or process_id must be provided"
 
-    if process_id is not None:
+    # Determine which families to run
+    if family is not None:
+        families = [family]
+    else:
         if process_id == 1:
             families = ['CF', 'CV']
         elif process_id == 2:
             families = ['FF', 'FV']
+        else:
+            raise ValueError("process_id must be 1 or 2")
+
+    # Determine which instance indices to run (25 total per family)
+    if family is not None and process_id is not None:
+        # Split 25 instances into 12 (process 1) and 13 (process 2)
+        instance_indices = list(range(12)) if process_id == 1 else list(range(12, 25))
     else:
-        families = [family]
+        instance_indices = list(range(25))
 
     family_to_vm = {fam: np.load(f"{velocity_data_path}/{fam}.npy", mmap_mode="r") for fam in families}
     family_to_gt = {fam: np.load(f"{gt_seismic_data_path}/{fam}.npy", mmap_mode="r") for fam in families}
@@ -79,8 +88,8 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
     for family in families:
         print(f"\n--- Starting Family: {family} ---")
         
-        # Loop over 10 instances in the family
-        for i in range(10):
+        # Loop over selected instances in the family
+        for i in instance_indices:
             print(f"-- Running Instance: {family}{i} --")
             test_data = torch.from_numpy(family_to_gt[family][i:i+1,:,:,:]).float().to(device)
             test_vm = torch.from_numpy(family_to_vm[family][i:i+1,:,:,:]).float().to(device)
@@ -108,13 +117,26 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
                                     loss_type='l1'
                                     )  
 
+            # Save detailed pickle (backward-compatible)
             result_filename = os.path.join(main_output_dir, f"{family}_{i}_result.pkl")
             with open(result_filename, 'wb') as f:
                 pickle.dump({'final_results':final_results, 'mu':mu}, f)
             print(f"Result saved to: {result_filename}")
+            # Also save a compact .npy with interior (unpadded) result; name with 1-based, 2-digit index
+            try:
+                mu_np = mu.detach().cpu().numpy()
+                if mu_np.ndim == 4 and mu_np.shape[2] >= 3 and mu_np.shape[3] >= 3:
+                    mu_np = mu_np[:, :, 1:-1, 1:-1]
+                mu_np = np.squeeze(mu_np)
+                npy_filename = os.path.join(main_output_dir, f"{family}_{i}.npy")
+                np.save(npy_filename, np.ascontiguousarray(mu_np))
+                print(f"Compact result saved to: {npy_filename}")
+            except Exception as e:
+                print(f"Warning: failed to save compact .npy for {family}#{i}: {e}")
         print(f"--- Finished Family: {family} ---")
     print(f"\n--- EXPERIMENT COMPLETE ---")
-    print(f"Process {process_id} completed: {len(families)} families, {len(families) * 10} instances")
+    total_instances = len(families) * (len(instance_indices) if isinstance(instance_indices, list) else 25)
+    print(f"Process {process_id} completed: {len(families)} families, {total_instances} instances")
     print(f"Individual results saved in: {main_output_dir}")
 
 

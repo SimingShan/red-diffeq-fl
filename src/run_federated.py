@@ -163,8 +163,16 @@ def run_full_experiment(
     for family in families:
         print(f"\n--- Starting Family: {family} ---")
         
-        # Loop over instances in the family
-        instance_indices = list(range(10)) if target_instances is None else list(target_instances)
+        # Loop over instances in the family (25 total). Allow overriding via target_instances.
+        if target_instances is not None:
+            instance_indices = list(target_instances)
+        else:
+            # If a single family is targeted via target_families and process split is desired,
+            # caller can pass process_id along with target_families to split 12/13 implicitly.
+            if target_families is not None and len(target_families) == 1 and target_families[0] == family:
+                instance_indices = list(range(12)) if process_id == 1 else list(range(12, 25))
+            else:
+                instance_indices = list(range(25))
         for i in instance_indices:
             print(f"-- Instance detected: {family}{i}", flush=True)
             # Instance-level resume: skip if result already exists (only in 'resume' mode)
@@ -292,12 +300,30 @@ def run_full_experiment(
             if save_path is not None:
                 with open(save_path, 'wb') as f:
                     pickle.dump(run_result, f)
+                # Also save a compact .npy with interior (unpadded) result; name with 1-based, 2-digit index
+                try:
+                    final_np = run_result["final_model"]
+                    if final_np.ndim == 4 and final_np.shape[2] >= 3 and final_np.shape[3] >= 3:
+                        final_np = final_np[:, :, 1:-1, 1:-1]
+                    final_np = np.squeeze(final_np)
+                    npy_filename = os.path.join(main_output_dir, f"{family}_{i}.npy")
+                    np.save(npy_filename, np.ascontiguousarray(final_np))
+                    print(f"Compact result saved to: {npy_filename}")
+                except Exception as e:
+                    print(f"Warning: failed to save compact .npy for {family}#{i}: {e}")
                     
         print(f"--- Finished Family: {family} ---")
 
     # --- 6. FINAL SUMMARY ---
     print(f"\n--- EXPERIMENT COMPLETE ---")
-    print(f"Process {process_id} completed: {len(families)} families, {len(families) * 10} instances")
+    # Compute total instances processed (approximate if target_instances varies per family)
+    if target_instances is not None:
+        total_instances = len(families) * len(set(target_instances))
+    elif target_families is not None and len(target_families) == 1:
+        total_instances = 12 if process_id == 1 else 13
+    else:
+        total_instances = len(families) * 25
+    print(f"Process {process_id} completed: {len(families)} families, {total_instances} instances")
     print(f"Individual results saved in: {main_output_dir}")
 
     return all_results 
