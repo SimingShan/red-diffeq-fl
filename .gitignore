@@ -8,6 +8,5 @@ pretrained_model/
 *.pkl
 *.png
 *.ipynb
-*.sh
 __pycache__/
 .ipynb_checkpoints/
