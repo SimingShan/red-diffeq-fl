@@ -68,7 +68,9 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
     if family is not None:
         families = [family]
     else:
-        if process_id == 1:
+        if process_id == 0:
+            families = ['CF', 'CV', 'FF', 'FV']
+        elif process_id == 1:
             families = ['CF', 'CV']
         elif process_id == 2:
             families = ['FF', 'FV']
@@ -77,8 +79,11 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
 
     # Determine which instance indices to run (25 total per family)
     if family is not None and process_id is not None:
-        # Split 25 instances into 12 (process 1) and 13 (process 2)
-        instance_indices = list(range(12)) if process_id == 1 else list(range(12, 25))
+        # Split 25 instances into 12 (process 1) and 13 (process 2); or whole data for 0
+        if process_id == 0:
+            instance_indices = list(range(25))
+        else:
+            instance_indices = list(range(12)) if process_id == 1 else list(range(12, 25))
     else:
         instance_indices = list(range(25))
 
@@ -138,7 +143,7 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
                                     mu = test_init_vm,
                                     mu_true=test_vm,
                                     y=test_data,
-                                    ts=300,
+                                    ts=4500,
                                     lr=0.03,
                                     reg_lambda=config.experiment.reg_lambda,
                                     fwi_forward=fwi_forward,

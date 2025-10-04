@@ -19,8 +19,8 @@ if __name__ == "__main__":
         "--process_id",
         type=int,
         required=False,
-        choices=[1, 2],
-        help="Process ID: 1 for families ['CF', 'CV'], 2 for families ['FF', 'FV']"
+        choices=[0, 1, 2],
+        help="Process ID: 0 for whole data (no split), 1 for ['CF','CV'], 2 for ['FF','FV']"
     )
 
     # Add the process_id argument
