@@ -5,7 +5,7 @@ from src.federated_learning.centralized_loss import *
 import src.utils.data_trans as data_trans
 import src.utils.pytorch_ssim as pytorch_ssim
 from src.diffusion_models.diffusion_model import *
-from src.pde_solvers.server_pde_solver import *
+from src.pde_solvers.client_pde_solver import FWIForward
 from src.full_waveform_inversion import *
 from datetime import datetime
 import glob
@@ -63,7 +63,7 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
     ssim_loss = pytorch_ssim.SSIM(window_size=11)  
     Inversion = run_inversion(diffusion, data_trans, pytorch_ssim, config.experiment.regularization)
     assert family is not None or process_id is not None, "Either family or process_id must be provided"
-
+ 
     # Determine which families to run
     if family is not None:
         families = [family]
@@ -93,16 +93,32 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
             print(f"-- Running Instance: {family}{i} --")
             test_data = torch.from_numpy(family_to_gt[family][i:i+1,:,:,:]).float().to(device)
             test_vm = torch.from_numpy(family_to_vm[family][i:i+1,:,:,:]).float().to(device)
-            test_init_vm = data_trans.prepare_initial_model(test_vm, initial_type="smoothed", sigma=10)
+            test_init_vm = data_trans.prepare_initial_model(
+                test_vm, initial_type="smoothed", sigma=config.forward.initial_sigma
+            )
             test_init_vm = torch.nn.functional.pad(test_init_vm, (1, 1, 1, 1), mode="constant", value=0)
             ctx = {'n_grid': config.forward.n_grid, 'nt': config.forward.nt, 'dx': config.forward.dx, 
                     'nbc': config.forward.nbc, 'dt': config.forward.dt, 'f': config.forward.f,
                     'sz': config.forward.sz, 'gz': config.forward.gz, 'ng': config.forward.ng,
                     'ns': config.forward.ns}
+            # Honor explicit source locations if provided (e.g., 2C)
+            try:
+                if hasattr(config.forward, 'sx') and config.forward.sx is not None:
+                    ctx['sx'] = list(config.forward.sx)
+            except Exception:
+                pass
 
-            fwi_forward = FWIForward(ctx, device, normalize=True, 
+            fwi_forward = FWIForward(
+                                    ctx, device, normalize=True, 
                                     v_denorm_func=data_trans.v_denormalize, 
-                                    s_norm_func=data_trans.s_normalize_none)
+                                    s_norm_func=data_trans.s_normalize_none
+                                    )
+
+            # Debug geometry summary for visibility
+            try:
+                print(f"Scenario: {config.experiment.scenario_flag}, ns (cfg): {config.forward.ns}, explicit sx: {getattr(config.forward, 'sx', None)}")
+            except Exception:
+                pass
 
             mu, final_results = Inversion.sample(
                                     mu = test_init_vm,
@@ -120,7 +136,7 @@ def run_centralized(config_path: str, process_id: int, run_name = 'Centralized_B
             # Save detailed pickle (backward-compatible)
             result_filename = os.path.join(main_output_dir, f"{family}_{i}_result.pkl")
             with open(result_filename, 'wb') as f:
-                pickle.dump({'final_results':final_results, 'mu':mu}, f)
+                pickle.dump({'final_results':final_results, 'mu':mu.detach().cpu().numpy()}, f)
             print(f"Result saved to: {result_filename}")
             # Also save a compact .npy with interior (unpadded) result; name with 1-based, 2-digit index
             try:

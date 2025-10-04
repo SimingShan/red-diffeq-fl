@@ -65,12 +65,24 @@ class ResultsDict:
         return total_loss
     
     def update(self, total_losses, obs_losses, reg_losses, ssim, mae, rmse):
-        self.results_dict['total_losses'].append(total_losses)
-        self.results_dict['obs_losses'].append(obs_losses)
-        self.results_dict['reg_losses'].append(reg_losses)
-        self.results_dict['ssim'].append(ssim)
-        self.results_dict['mae'].append(mae)
-        self.results_dict['rmse'].append(rmse)
+        # Convert tensors to plain Python floats to avoid keeping autograd graphs in memory
+        def _to_float(val):
+            try:
+                if isinstance(val, torch.Tensor):
+                    return val.detach().float().cpu().item()
+            except Exception:
+                pass
+            try:
+                return float(val)
+            except Exception:
+                return val
+
+        self.results_dict['total_losses'].append(_to_float(total_losses))
+        self.results_dict['obs_losses'].append(_to_float(obs_losses))
+        self.results_dict['reg_losses'].append(_to_float(reg_losses))
+        self.results_dict['ssim'].append(_to_float(ssim))
+        self.results_dict['mae'].append(_to_float(mae))
+        self.results_dict['rmse'].append(_to_float(rmse))
 
     def get_results(self):
         return self.results_dict
@@ -135,7 +147,7 @@ class run_inversion:
         # Optimizer setup with Cosine Annealing (track gradients for mu)
         optimizer = torch.optim.Adam([mu], lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=ts, eta_min=0.0)
-        results_dict = ResultsDict(self.data_trans, self.ssim_loss, loss_type, self.regularization_method, reg_lambda)
+        results_dict = ResultsDict(self.data_trans, self.ssim_loss, loss_type, self.regularization_method, reg_lambda, scenario=scenario)
         y = y.to(self.device)
     
         # Initialize the tqdm progress bar
@@ -144,7 +156,13 @@ class run_inversion:
         for l in pbar:
             # Seismic forward modeling for loss_obs
             # Model expects interior (no padding). Ensure view is not reassigning storage
-            predicted_seismic = fwi_forward(mu[:, :, 1:-1, 1:-1])
+            # Prefer scenario-aware forward if supported by the solver
+            mu_interior = mu[:, :, 1:-1, 1:-1]
+            try:
+                predicted_seismic = fwi_forward(mu_interior, scenario=scenario)
+            except TypeError:
+                # Backward compatibility with solvers that do not accept `scenario`
+                predicted_seismic = fwi_forward(mu_interior)
             # Calculate the loss
             loss_obs = results_dict.calcualte_seismic_loss(predicted_seismic, y, loss_type)
             raw_reg_loss = results_dict.calcualte_raw_reg_loss(mu, reg_lambda)
