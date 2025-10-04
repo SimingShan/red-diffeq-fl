@@ -42,6 +42,22 @@ if __name__ == "__main__":
         help="Run name: 'main' for main experiments, 'centralized' for centralized experiments"
     )
 
+    # Add batch size for centralized runs (supports integer or 'max')
+    parser.add_argument(
+        "--batch_size",
+        type=str,
+        required=False,
+        help="Batch size for centralized runs; use an integer or 'max' to use all instances per PID"
+    )
+    # Also accept hyphenated form for convenience
+    parser.add_argument(
+        "--batch-size",
+        dest="batch_size",
+        type=str,
+        required=False,
+        help=argparse.SUPPRESS
+    )
+
     # Parse arguments
     args = parser.parse_args()
     
@@ -76,4 +92,5 @@ if __name__ == "__main__":
             process_id=args.process_id,
             run_name=args.run_name,
             family=args.family,
+            batch_size=args.batch_size,
         )

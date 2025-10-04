@@ -41,7 +41,8 @@ def prepare_initial_model(v_true, initial_type=None, sigma=None, linear_coeff=1.
     v_np = v_normalize(v_np)
     
     if initial_type == 'smoothed':
-        v_blurred = gaussian_filter(v_np, sigma=sigma)
+        # Apply Gaussian blur per-sample and per-channel only; avoid cross-sample/channel blur
+        v_blurred = gaussian_filter(v_np, sigma=(0, 0, sigma, sigma))
     elif initial_type == 'homogeneous':
         min_top_row = np.min(v_np[0, 0, 0, :])
         v_blurred = np.full_like(v_np, min_top_row)

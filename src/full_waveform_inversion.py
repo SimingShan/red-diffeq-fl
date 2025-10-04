@@ -153,29 +153,41 @@ class run_inversion:
         # Initialize the tqdm progress bar
         pbar = tqdm(range(ts), desc="Optimizing", unit="step")
     
+        # AMP for speed (safe for this PDE + losses)
+        use_amp = torch.cuda.is_available()
+        if use_amp:
+            scaler = torch.amp.GradScaler('cuda')
         for l in pbar:
-            # Seismic forward modeling for loss_obs
-            # Model expects interior (no padding). Ensure view is not reassigning storage
-            # Prefer scenario-aware forward if supported by the solver
             mu_interior = mu[:, :, 1:-1, 1:-1]
-            try:
-                predicted_seismic = fwi_forward(mu_interior, scenario=scenario)
-            except TypeError:
-                # Backward compatibility with solvers that do not accept `scenario`
-                predicted_seismic = fwi_forward(mu_interior)
-            # Calculate the loss
-            loss_obs = results_dict.calcualte_seismic_loss(predicted_seismic, y, loss_type)
-            raw_reg_loss = results_dict.calcualte_raw_reg_loss(mu, reg_lambda)
-            total_loss = results_dict.calcualte_total_loss(loss_obs, raw_reg_loss, reg_lambda)
-            # Calculate the metrics
+            if use_amp:
+                with torch.amp.autocast('cuda', dtype=torch.float16):
+                    try:
+                        predicted_seismic = fwi_forward(mu_interior, scenario=scenario)
+                    except TypeError:
+                        predicted_seismic = fwi_forward(mu_interior)
+                    loss_obs = results_dict.calcualte_seismic_loss(predicted_seismic, y, loss_type)
+                    raw_reg_loss = results_dict.calcualte_raw_reg_loss(mu, reg_lambda)
+                    total_loss = results_dict.calcualte_total_loss(loss_obs, raw_reg_loss, reg_lambda)
+            else:
+                try:
+                    predicted_seismic = fwi_forward(mu_interior, scenario=scenario)
+                except TypeError:
+                    predicted_seismic = fwi_forward(mu_interior)
+                loss_obs = results_dict.calcualte_seismic_loss(predicted_seismic, y, loss_type)
+                raw_reg_loss = results_dict.calcualte_raw_reg_loss(mu, reg_lambda)
+                total_loss = results_dict.calcualte_total_loss(loss_obs, raw_reg_loss, reg_lambda)
+
             mae, rmse, ssim = results_dict.calculate_metrics(mu, mu_true, y)
-            # Update the results dictionary
             results_dict.update(total_loss, loss_obs, raw_reg_loss, ssim, mae, rmse)
-    
-            # Update parameters
+
             optimizer.zero_grad(set_to_none=True)
-            total_loss.backward()
-            optimizer.step()
+            if use_amp:
+                scaler.scale(total_loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                total_loss.backward()
+                optimizer.step()
             mu.data.clamp_(-1, 1)
             scheduler.step()
 

@@ -23,6 +23,19 @@ class FWIForward(nn.Module):
         else:
             ctx['gx'] = np.array(ctx['gx']) * ctx['dx']
         self.ctx = ctx
+        # Precompute source wavelet once per instance
+        try:
+            src_np = self.ricker(self.ctx['f'], self.ctx['dt'], self.ctx['nt'])
+            self.src = torch.tensor(src_np, device=self.device)
+        except Exception:
+            self.src = None
+        # Optionally compile the inner FWM step if available (PyTorch 2.x)
+        try:
+            import torch
+            if hasattr(torch, 'compile'):
+                self.FWM = torch.compile(self.FWM, fullgraph=False)
+        except Exception:
+            pass
 
     def ricker(self, f, dt, nt):
         nw = 2.2/f/dt; nw = 2*np.floor(nw/2)+1; nc = np.floor(nw/2); k = np.arange(nw)
@@ -46,13 +59,15 @@ class FWIForward(nn.Module):
         igx = np.around(gx/dx)+nbc; igz = np.around(gz/dx)+nbc
         return isx.astype('int'),int(isz),igx.astype('int'),int(igz)
     def FWM(self, v, nbc, dx, nt, dt, f, sx, sz, gx, gz, **kwargs):
-        src = self.ricker(f, dt, nt); alpha = (v*dt/dx) ** 2; abc = self.get_Abc(v, nbc, dx)
+        src = self.src if self.src is not None else torch.tensor(self.ricker(f, dt, nt), device=self.device)
+        alpha = (v*dt/dx) ** 2; abc = self.get_Abc(v, nbc, dx)
         kappa = abc*dt; c1 = -2.5; c2 = 4.0/3.0; c3 = -1.0/12.0; temp1 = 2+2*c1*alpha-kappa
         temp2 = 1-kappa; beta_dt = (v*dt) ** 2; ns = len(sx)
         isx,isz,igx,igz = self.adj_sr(sx,sz,gx,gz,dx,nbc); seis = []
-        p1 = torch.zeros((v.shape[0], ns, v.shape[2], v.shape[3]), device=self.device, requires_grad=True)
-        p0 = torch.zeros((v.shape[0], ns, v.shape[2], v.shape[3]), device=self.device, requires_grad=True)
-        p  = torch.zeros((v.shape[0], ns, v.shape[2], v.shape[3]), device=self.device, requires_grad=True)
+        # Pressure fields need not require gradients; gradients flow through alpha(v)
+        p1 = torch.zeros((v.shape[0], ns, v.shape[2], v.shape[3]), device=self.device)
+        p0 = torch.zeros((v.shape[0], ns, v.shape[2], v.shape[3]), device=self.device)
+        p  = torch.zeros((v.shape[0], ns, v.shape[2], v.shape[3]), device=self.device)
         for i in range(nt):
             p = (temp1*p1 - temp2*p0 + alpha * (c2*(torch.roll(p1, 1, dims = -2) + torch.roll(p1, -1, dims = -2) + torch.roll(p1, 1, dims = -1)+ torch.roll(p1, -1, dims = -1)) +c3*(torch.roll(p1, 2, dims = -2) + torch.roll(p1, -2, dims = -2) + torch.roll(p1, 2, dims = -1)+ torch.roll(p1, -2, dims = -1))))
             for loc in range(ns):
