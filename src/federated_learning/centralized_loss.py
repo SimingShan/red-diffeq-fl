@@ -42,9 +42,6 @@ def scenario_aware_seismic_loss(y, predicted_seismic, scenario):
     else:
         raise ValueError(f"Unsupported scenario: {scenario}")
 
-    # Consistent scaling across scenarios
     diff = (y - predicted_seismic).abs() * mask
-    denom = mask.sum().clamp_min(1.0)  # number of active elements
-
-    return diff.sum() / denom
-
+    per = diff.flatten(1).sum(1) / mask.flatten(1).sum(1).clamp_min(1.0)
+    return per.mean()  # use per.sum() if you want single-sample scaling

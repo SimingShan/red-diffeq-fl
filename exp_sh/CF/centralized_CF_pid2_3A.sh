@@ -12,4 +12,4 @@ module reset
 module load miniconda
 conda activate /home/ss5235/project_pi_ll2247/ss5235/conda_envs/fwi
 
-python main.py --run_name centralized --family CF --process_id 0 --config_path configs/main_exp/diff/config_3A.yml --batch_size max
+python main.py --run_name centralized --family CF --process_id 2 --config_path configs/main_exp/diff/config_3A.yml --batch_size max
